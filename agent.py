@@ -1,50 +1,56 @@
-import sys
 import subprocess
+import sys
 import os
+import time
+from IPython.display import display, HTML
+import socket
 
-# --- STEP 1: AUTOMATIC DEPENDENCY INSTALLATION ---
-def install_dependencies():
+# --- STEP 1: INSTALLATION OF DEPENDENCIES ---
+def install_requirements(summary_log):
     """
-    Checks and installs all necessary Python packages.
-    This function runs only once to set up the environment.
+    Installs all necessary Python packages and logs the result.
     """
-    print("--- ⚙️ Checking and Installing Dependencies ---")
+    print("--- ⚙️ STEP 1: INSTALLING PACKAGES (Official Unsloth Method with Forced Reinstall) ---")
     try:
-        # Using a simple file lock to prevent re-installations on every run
-        lock_file = '.deps_installed.lock'
-        if os.path.exists(lock_file):
-            print("✅ Dependencies are already installed. Skipping.")
-            return
-
-        print("📦 Forcing re-installation of unsloth for optimal performance...")
-        subprocess.check_call([
+        print("📦 Forcing re-installation of unsloth and its core dependencies...")
+        unsloth_command = [
             sys.executable, "-m", "pip", "install", "--no-cache-dir", "--force-reinstall",
             "unsloth[colab-new]@git+https://github.com/unslothai/unsloth.git"
-        ])
-        
-        print("📦 Installing core and application packages (numpy, streamlit, cv2, etc.)...")
-        packages = [
-            "numpy<2.2", "streamlit", "nest_asyncio", "opencv-python",
+        ]
+        subprocess.check_call(unsloth_command, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+        print("✅ Unsloth and core AI libraries installed successfully.")
+
+        print("\n📦 Pinning NumPy version to prevent conflicts...")
+        numpy_command = [sys.executable, "-m", "pip", "install", "numpy<2.2"]
+        subprocess.check_call(numpy_command, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+        print("✅ NumPy version pinned successfully.")
+
+        print("\n📦 Installing remaining application packages (streamlit, yt-dlp, etc.)...")
+        # --- MODIFIED: Removed 'pyngrok' from the list of packages ---
+        app_packages = [
+            "streamlit", "nest_asyncio", "opencv-python",
             "Pillow", "timm", "yt-dlp"
         ]
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "-U"] + packages)
+        app_command = [sys.executable, "-m", "pip", "install", "-U"] + app_packages
+        subprocess.check_call(app_command, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+        print("✅ Application packages installed successfully.")
 
-        print("\n--- ✅ INSTALLATION COMPLETE ---")
-        
-        # Create a lock file to indicate that dependencies have been installed
-        with open(lock_file, 'w') as f:
-            f.write('done')
-
+        print("\n--- ✅ INSTALLATION COMPLETE ---\n")
+        summary_log.append(("success", "✅ **Step 1: Dependencies installed.** All required packages are ready."))
     except Exception as e:
+        error_message = f"❌ **Step 1: Dependency installation failed.** The script cannot continue. Error: {e}"
         print(f"\n❌ An error occurred during installation: {e}")
-        print("Please try running the installation manually.")
-        sys.exit(1) # Exit if installation fails
+        summary_log.append(("error", error_message))
+        raise
 
-# Run the dependency installer before importing the packages
-install_dependencies()
-
-
-# --- STEP 2: STREAMLIT APPLICATION CODE ---
+# --- STEP 2: CREATE THE STREAMLIT APPLICATION FILE ---
+def create_streamlit_app_file(summary_log):
+    """
+    Writes the Python code for the Streamlit application into a .py file.
+    """
+    print("--- ✍️ STEP 2: CREATING STREAMLIT APP FILE (gemma_multimodal_app.py) ---")
+    app_code = '''
+import os
 # FIX: Unset the invalid environment variable before importing torch
 if 'TORCH_LOGS' in os.environ:
     del os.environ['TORCH_LOGS']
@@ -58,7 +64,6 @@ import torch
 from transformers import TextStreamer
 import torch._dynamo
 import yt_dlp
-from unsloth import FastModel
 
 # Configure torch dynamo for potential speedups
 torch._dynamo.config.cache_size_limit = 64
@@ -193,6 +198,7 @@ with st.sidebar:
         if st.button("🚀 Load Gemma 3N Model", type="primary", use_container_width=True):
             with st.spinner("Loading model... This may take a few minutes..."):
                 try:
+                    from unsloth import FastModel
                     st.session_state.model, st.session_state.tokenizer = FastModel.from_pretrained("unsloth/gemma-3n-E4B-it", dtype=None, max_seq_length=2048, load_in_4bit=True)
                     st.session_state.model_loaded = True
                     st.rerun()
@@ -201,14 +207,18 @@ with st.sidebar:
     else:
         st.success("✅ Model is loaded and ready!")
         st.divider()
+
         st.header("🎯 Select Feature")
         feature = st.radio("Choose the type of analysis:",
-                           ["📝 Text → Text", "📸 Image + Text → Text", "🎥 Video (Upload) + Text → Text", "🎥 YouTube URL + Text → Text", "🎵 Audio + Text → Text", "🎬 Video + Audio + Text"],
-                           label_visibility="collapsed")
+            ["📝 Text → Text", "📸 Image + Text → Text", "🎥 Video (Upload) + Text → Text", "🎥 YouTube URL + Text → Text", "🎵 Audio + Text → Text", "🎬 Video + Audio + Text"],
+            label_visibility="collapsed")
+
         st.divider()
+
         st.header("⚙️ Generation Settings")
         max_tokens = st.slider("Max New Tokens", 50, 2048, 512)
         temperature = st.slider("Temperature", 0.1, 1.5, 0.9, 0.05)
+
 
 # --- Main App ---
 if st.session_state.model_loaded:
@@ -239,7 +249,6 @@ if st.session_state.model_loaded:
         display_chat_history(st.session_state[messages_key])
         return messages_key
 
-    # Text Chat
     if feature == "📝 Text → Text":
         messages_key = feature_container("text")
         text_prompt = st.text_area("Enter your prompt:", height=150)
@@ -247,7 +256,6 @@ if st.session_state.model_loaded:
             handle_chat_submission(messages_key, text_prompt, lambda p: [{"type": "text", "text": p}])
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # Image Chat
     elif feature == "📸 Image + Text → Text":
         messages_key = feature_container("image")
         if "current_image_id" not in st.session_state: st.session_state.current_image_id = None
@@ -266,7 +274,6 @@ if st.session_state.model_loaded:
         else: st.info("Please upload an image to begin.")
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # Video Upload Chat
     elif feature == "🎥 Video (Upload) + Text → Text":
         messages_key = feature_container("vid_upload")
         if "current_vid_upload_id" not in st.session_state: st.session_state.current_vid_upload_id = None
@@ -289,7 +296,6 @@ if st.session_state.model_loaded:
         else: st.info("Please upload a video to begin.")
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # YouTube Chat
     elif feature == "🎥 YouTube URL + Text → Text":
         messages_key = feature_container("youtube")
         if "current_youtube_url" not in st.session_state: st.session_state.current_youtube_url = None
@@ -313,7 +319,6 @@ if st.session_state.model_loaded:
         else: st.info("Please enter a YouTube URL to begin.")
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # Audio Chat
     elif feature == "🎵 Audio + Text → Text":
         messages_key = feature_container("audio")
         if "current_audio_id" not in st.session_state: st.session_state.current_audio_id = None
@@ -334,7 +339,6 @@ if st.session_state.model_loaded:
         else: st.info("Please upload an audio file to begin.")
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # Video + Audio Chat
     elif feature == "🎬 Video + Audio + Text":
         messages_key = feature_container("vid_audio")
         if "current_vid_audio_id" not in st.session_state: st.session_state.current_vid_audio_id = None
@@ -365,3 +369,110 @@ if st.session_state.model_loaded:
 else:
     st.info("👋 Welcome! Please load the Gemma model from the sidebar to begin.")
     st.image("https://storage.googleapis.com/gweb-aip-images/news/gemma/gemma-7b-kv-cache.gif", caption="Gemma is a family of lightweight, state-of-the-art open models from Google.", use_column_width=True)
+'''
+    try:
+        with open("gemma_multimodal_app.py", "w", encoding="utf-8") as f:
+            f.write(app_code)
+        print("--- ✅ APP FILE CREATED SUCCESSFULLY ---\n")
+        summary_log.append(("success", "✅ **Step 2: App file created.** 'gemma_multimodal_app.py' is ready."))
+    except Exception as e:
+        error_message = f"❌ **Step 2: Failed to create app file.** Error: {e}"
+        print(f"--- ❌ FAILED TO CREATE APP FILE: {e} ---\n")
+        summary_log.append(("error", error_message))
+        raise
+
+# --- MODIFIED STEP 3: LAUNCH THE STREAMLIT APP DIRECTLY ---
+def launch_streamlit(summary_log):
+    """
+    Kills any old Streamlit process and starts a new one directly.
+    """
+    print("--- 🚀 STEP 3: LAUNCHING STREAMLIT APPLICATION ---")
+    PORT = 8501
+
+    try:
+        # Terminate any existing Streamlit process on the same port
+        subprocess.run(["pkill", "-f", f"streamlit run gemma_multimodal_app.py --server.port {PORT}"], capture_output=True)
+        print("...Terminated any old Streamlit processes.")
+        time.sleep(2)
+    except FileNotFoundError:
+        print("...`pkill` not found, skipping (normal on Windows).")
+
+    # Command to run Streamlit in headless mode
+    command = ["streamlit", "run", "gemma_multimodal_app.py", "--server.port", str(PORT), "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+
+    # Start the Streamlit process in the background
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    print("...Streamlit server is starting in the background.")
+    time.sleep(10) # Give it a moment to initialize
+
+    # Check if the process started correctly
+    if process.poll() is not None:
+        print("--- ❌ STREAMLIT FAILED TO START ---")
+        stdout, stderr = process.communicate()
+        print("--- Streamlit stdout ---\n", stdout.decode())
+        print("--- Streamlit stderr ---\n", stderr.decode())
+        summary_log.append(("error", "❌ **Step 3: Streamlit launch failed.** The server could not start."))
+        return
+
+    # Find the local IP address of the VM
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        vm_ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        vm_ip = "YOUR_VM_IP_ADDRESS"
+
+    # --- MODIFIED: Display direct access instructions instead of ngrok URL ---
+    access_message = f'''
+    <div style="border: 2px solid #4CAF50; border-radius: 10px; padding: 20px; background-color: #f0fff0; margin: 20px 0;">
+        <h2 style="color: #2e7d32;">🎉 Your AI Assistant is Live!</h2>
+        <p>You can now access the application directly in your browser using your VM's IP address.</p>
+        <p>Open this URL in a new tab:</p>
+        <a href="http://{vm_ip}:{PORT}" target="_blank" style="display: inline-block; padding: 12px 24px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px; font-size: 18px; font-weight: bold;">
+            http://{vm_ip}:{PORT}
+        </a>
+        <hr style="margin: 20px 0;">
+        <h3 style="color: #d32f2f;">🚨 Important Note:</h3>
+        <p>If the link doesn't work, you may need to open port <strong>{PORT}</strong> in your Virtual Machine's firewall settings (e.g., on Google Cloud, AWS, or Azure).</p>
+    </div>
+    '''
+    display(HTML(access_message))
+    summary_log.append(("success", f"✅ **Step 3: App is live!** Access it at http://{vm_ip}:{PORT}"))
+
+# --- STEP 4: DISPLAY EXECUTION SUMMARY ---
+def display_execution_summary(summary_log):
+    """
+    Displays a final, formatted summary of the script's execution.
+    """
+    print("\n\n" + "="*80)
+    print("--- 📋 EXECUTION SUMMARY ---")
+    print("="*80)
+
+    if not summary_log:
+        print("No actions were performed.")
+        return
+
+    # Using simple print for terminal-friendly output
+    for status, message in summary_log:
+        # Clean up markdown for plain text
+        clean_message = message.replace("**", "").replace("✅", "[SUCCESS]").replace("❌", "[ERROR]")
+        print(f"- {clean_message}")
+    print("="*80)
+
+
+# --- MAIN EXECUTION BLOCK ---
+if __name__ == "__main__":
+    execution_summary = []
+    try:
+        install_requirements(execution_summary)
+        create_streamlit_app_file(execution_summary)
+        launch_streamlit(execution_summary)
+        print("\n--- SCRIPT COMPLETE ---")
+        print("The Streamlit application is running in the background.")
+        print("To stop the app, you can close this terminal or find and kill the process.")
+
+    except Exception as e:
+        print(f"\n--- 🛑 SCRIPT HALTED DUE TO A CRITICAL ERROR: {e} ---")
+    finally:
+        display_execution_summary(execution_summary)
