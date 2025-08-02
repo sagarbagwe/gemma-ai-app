@@ -15,7 +15,7 @@ def install_requirements(summary_log):
         print("📦 Forcing re-installation of unsloth and its core dependencies...")
         unsloth_command = [
             sys.executable, "-m", "pip", "install", "--no-cache-dir", "--force-reinstall",
-            "unsloth"
+            "unsloth[colab-new]@git+https://github.com/unslothai/unsloth.git"
         ]
         subprocess.check_call(unsloth_command, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
         print("✅ Unsloth and core AI libraries installed successfully.")
