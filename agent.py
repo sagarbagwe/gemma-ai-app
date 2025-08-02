@@ -1,48 +1,54 @@
-import subprocess
 import sys
+import subprocess
 import os
-import time
-# The following import is only needed for displaying HTML in notebooks,
-# which is not relevant for a systemd service. We can remove it.
-# from IPython.display import display, HTML
 
-# --- STEP 1: INSTALLATION OF DEPENDENCIES ---
-def install_requirements():
+# --- STEP 1: AUTOMATIC DEPENDENCY INSTALLATION ---
+def install_dependencies():
     """
-    Installs all necessary Python packages.
+    Checks and installs all necessary Python packages.
+    This function runs only once to set up the environment.
     """
-    print("--- ⚙️ STEP 1: INSTALLING PACKAGES ---")
+    print("--- ⚙️ Checking and Installing Dependencies ---")
     try:
-        # Note: The subprocess.check_call commands below are no longer needed
-        # if you have already installed the dependencies manually in your virtual
-        # environment as per the previous steps.
-        # However, for a robust script, you could keep them as a safeguard.
-        print("✅ Dependencies are assumed to be installed in the virtual environment.")
-        # If you want to keep the auto-install functionality, you would keep these lines.
-        # For a clean deployment, it's better to manage dependencies with a requirements.txt
-        # file and install them once.
+        # Using a simple file lock to prevent re-installations on every run
+        lock_file = '.deps_installed.lock'
+        if os.path.exists(lock_file):
+            print("✅ Dependencies are already installed. Skipping.")
+            return
+
+        print("📦 Forcing re-installation of unsloth for optimal performance...")
+        subprocess.check_call([
+            sys.executable, "-m", "pip", "install", "--no-cache-dir", "--force-reinstall",
+            "unsloth[colab-new]@git+https://github.com/unslothai/unsloth.git"
+        ])
+        
+        print("📦 Installing core and application packages (numpy, streamlit, cv2, etc.)...")
+        packages = [
+            "numpy<2.2", "streamlit", "nest_asyncio", "opencv-python",
+            "Pillow", "timm", "yt-dlp"
+        ]
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-U"] + packages)
+
+        print("\n--- ✅ INSTALLATION COMPLETE ---")
+        
+        # Create a lock file to indicate that dependencies have been installed
+        with open(lock_file, 'w') as f:
+            f.write('done')
+
     except Exception as e:
-        print(f"❌ An error occurred during installation: {e}")
-        raise
+        print(f"\n❌ An error occurred during installation: {e}")
+        print("Please try running the installation manually.")
+        sys.exit(1) # Exit if installation fails
 
-# --- STEP 2: CREATE THE STREAMLIT APPLICATION FILE ---
-def create_streamlit_app_file():
-    """
-    Writes the Python code for the Streamlit application into a .py file.
-    This function is also not needed anymore, as the app is already a single file.
-    """
-    pass # No need to create the file, as it already exists and is the main script.
+# Run the dependency installer before importing the packages
+install_dependencies()
 
 
-# --- Main Application Logic (Unchanged) ---
-# --- The entire application code from your original script would go here ---
+# --- STEP 2: STREAMLIT APPLICATION CODE ---
+# FIX: Unset the invalid environment variable before importing torch
+if 'TORCH_LOGS' in os.environ:
+    del os.environ['TORCH_LOGS']
 
-# Your app_code starts here, which is what the Streamlit server runs.
-# We no longer need to write it to a file, as it is the file itself.
-# We will simply execute this script directly.
-# The following is a placeholder for your Streamlit code.
-
-# --- START OF STREAMLIT APP CODE ---
 import streamlit as st
 import tempfile
 import cv2
@@ -52,6 +58,7 @@ import torch
 from transformers import TextStreamer
 import torch._dynamo
 import yt_dlp
+from unsloth import FastModel
 
 # Configure torch dynamo for potential speedups
 torch._dynamo.config.cache_size_limit = 64
@@ -91,7 +98,6 @@ st.markdown("""
         padding: 12px;
         border: 1px solid #e6e6e6;
     }
-    /* Style the radio buttons for better visibility */
     div[role="radiogroup"] > label {
         display: block;
         padding: 8px 12px;
@@ -187,7 +193,6 @@ with st.sidebar:
         if st.button("🚀 Load Gemma 3N Model", type="primary", use_container_width=True):
             with st.spinner("Loading model... This may take a few minutes..."):
                 try:
-                    from unsloth import FastModel
                     st.session_state.model, st.session_state.tokenizer = FastModel.from_pretrained("unsloth/gemma-3n-E4B-it", dtype=None, max_seq_length=2048, load_in_4bit=True)
                     st.session_state.model_loaded = True
                     st.rerun()
@@ -196,18 +201,14 @@ with st.sidebar:
     else:
         st.success("✅ Model is loaded and ready!")
         st.divider()
-
         st.header("🎯 Select Feature")
         feature = st.radio("Choose the type of analysis:",
-            ["📝 Text → Text", "📸 Image + Text → Text", "🎥 Video (Upload) + Text → Text", "🎥 YouTube URL + Text → Text", "🎵 Audio + Text → Text", "🎬 Video + Audio + Text"],
-            label_visibility="collapsed")
-        
+                           ["📝 Text → Text", "📸 Image + Text → Text", "🎥 Video (Upload) + Text → Text", "🎥 YouTube URL + Text → Text", "🎵 Audio + Text → Text", "🎬 Video + Audio + Text"],
+                           label_visibility="collapsed")
         st.divider()
-
         st.header("⚙️ Generation Settings")
         max_tokens = st.slider("Max New Tokens", 50, 2048, 512)
         temperature = st.slider("Temperature", 0.1, 1.5, 0.9, 0.05)
-
 
 # --- Main App ---
 if st.session_state.model_loaded:
@@ -364,18 +365,3 @@ if st.session_state.model_loaded:
 else:
     st.info("👋 Welcome! Please load the Gemma model from the sidebar to begin.")
     st.image("https://storage.googleapis.com/gweb-aip-images/news/gemma/gemma-7b-kv-cache.gif", caption="Gemma is a family of lightweight, state-of-the-art open models from Google.", use_column_width=True)
-'''
-# --- END OF STREAMLIT APP CODE ---
-
-# We will run this file directly with the Streamlit command.
-if __name__ == "__main__":
-    # We no longer need the installation and launching logic here.
-    # The `systemd` service is now responsible for running Streamlit.
-    # The dependencies should be installed manually in the virtual environment.
-
-    # This part can be safely commented out or removed entirely
-    # as the `systemd` service directly calls the `streamlit run` command.
-    print("This script is now configured to be run directly by the streamlit command.")
-    print("Please use the systemd service to start it.")
-    # The `streamlit run gemma_multimodal_app.py` command is what starts the app.
-    # The rest of the script is the application itself.
