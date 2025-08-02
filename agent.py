@@ -40,7 +40,6 @@ def install_requirements(summary_log):
         error_message = f"❌ **Step 1: Dependency installation failed.** The script cannot continue. Error: {e}"
         print(f"\n❌ An error occurred during installation: {e}")
         summary_log.append(("error", error_message))
-        # This is a critical step, so we stop the script if it fails
         raise
 
 # --- STEP 2: CREATE THE STREAMLIT APPLICATION FILE ---
@@ -50,7 +49,6 @@ def create_streamlit_app_file(summary_log):
     """
     print("--- ✍️ STEP 2: CREATING STREAMLIT APP FILE (gemma_multimodal_app.py) ---")
 
-    # MODIFIED: Replaced the selectbox with radio buttons for direct clicking.
     app_code = '''
 import os
 # FIX: Unset the invalid environment variable before importing torch
@@ -391,7 +389,6 @@ else:
         error_message = f"❌ **Step 2: Failed to create app file.** The script cannot launch. Error: {e}"
         print(f"--- ❌ FAILED TO CREATE APP FILE: {e} ---\n")
         summary_log.append(("error", error_message))
-        # This is also a critical step
         raise
 
 # --- STEP 3: LAUNCH THE STREAMLIT APP ---
@@ -443,13 +440,19 @@ def launch_streamlit(summary_log):
             return
 
         ngrok.set_auth_token(NGROK_AUTH_TOKEN)
-        # Disconnect any existing tunnels to prevent errors
         for tunnel in ngrok.get_tunnels():
             ngrok.disconnect(tunnel.public_url)
         public_tunnel = ngrok.connect(8501)
         public_url = public_tunnel.public_url
+        
+        # --- MODIFIED: ADDED A PRINT STATEMENT FOR TERMINAL VIEW ---
+        print("\n" + "="*80)
+        print("🎉 Your AI Assistant is Live! 🎉")
+        print(f"Open this URL in your web browser: {public_url}")
+        print("="*80 + "\n")
+        # --- END MODIFIED SECTION ---
 
-        # MODIFIED: Updated the instructions to reflect the change to radio buttons.
+        # Original HTML display (for compatibility with interactive notebooks)
         display(HTML(f'''
         <div style="border: 2px solid #4CAF50; border-radius: 10px; padding: 20px; background-color: #f0fff0; margin: 20px 0;">
             <h2 style="color: #2e7d32;">🎉 Your AI Assistant is Live!</h2>
@@ -493,7 +496,6 @@ def display_execution_summary(summary_log):
         summary_html += '<li style="padding: 10px; color: #555;">No actions were performed.</li>'
     else:
         for status, message in summary_log:
-            # Set background and text color based on success or error status
             bg_color = "#e8f5e9" if status == "success" else "#ffcdd2"
             text_color = "#2e7d32" if status == "success" else "#c62828"
             summary_html += f'<li style="padding: 10px; border-radius: 5px; margin-top: 8px; background-color: {bg_color}; color: {text_color}; font-size: 16px;">{message}</li>'
@@ -503,16 +505,12 @@ def display_execution_summary(summary_log):
 
 # --- MAIN EXECUTION BLOCK ---
 if __name__ == "__main__":
-    # This list will hold the summary of each step
     execution_summary = []
     try:
-        # Each step is now self-contained and reports its status to the summary list.
         install_requirements(execution_summary)
         create_streamlit_app_file(execution_summary)
         launch_streamlit(execution_summary)
     except Exception:
-        # This catches critical errors from steps that 'raise' an exception (e.g., install, create_file)
         print("\n--- 🛑 SCRIPT HALTED DUE TO A CRITICAL ERROR ---")
     finally:
-        # This block will always run, ensuring the summary is displayed regardless of errors.
         display_execution_summary(execution_summary)
