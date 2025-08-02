@@ -2,59 +2,47 @@ import subprocess
 import sys
 import os
 import time
-from IPython.display import display, HTML
+# The following import is only needed for displaying HTML in notebooks,
+# which is not relevant for a systemd service. We can remove it.
+# from IPython.display import display, HTML
 
 # --- STEP 1: INSTALLATION OF DEPENDENCIES ---
-def install_requirements(summary_log):
+def install_requirements():
     """
-    Installs all necessary Python packages and logs the result.
+    Installs all necessary Python packages.
     """
-    print("--- ⚙️ STEP 1: INSTALLING PACKAGES (Official Unsloth Method with Forced Reinstall) ---")
+    print("--- ⚙️ STEP 1: INSTALLING PACKAGES ---")
     try:
-        print("📦 Forcing re-installation of unsloth and its core dependencies...")
-        unsloth_command = [
-            sys.executable, "-m", "pip", "install", "--no-cache-dir", "--force-reinstall",
-            "unsloth[colab-new]@git+https://github.com/unslothai/unsloth.git"
-        ]
-        # Using DEVNULL to keep the log clean, as we print our own status messages
-        subprocess.check_call(unsloth_command, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-        print("✅ Unsloth and core AI libraries installed successfully.")
-
-        print("\n📦 Pinning NumPy version to prevent conflicts...")
-        numpy_command = [sys.executable, "-m", "pip", "install", "numpy<2.2"]
-        subprocess.check_call(numpy_command, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-        print("✅ NumPy version pinned successfully.")
-
-        print("\n📦 Installing remaining application packages (streamlit, ngrok, yt-dlp, etc.)...")
-        app_packages = [
-            "streamlit", "nest_asyncio", "pyngrok", "opencv-python",
-            "Pillow", "timm", "yt-dlp"
-        ]
-        app_command = [sys.executable, "-m", "pip", "install", "-U"] + app_packages
-        subprocess.check_call(app_command, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-        print("✅ Application packages installed successfully.")
-
-        print("\n--- ✅ INSTALLATION COMPLETE ---\n")
-        summary_log.append(("success", "✅ **Step 1: Dependencies installed.** All required packages are ready."))
+        # Note: The subprocess.check_call commands below are no longer needed
+        # if you have already installed the dependencies manually in your virtual
+        # environment as per the previous steps.
+        # However, for a robust script, you could keep them as a safeguard.
+        print("✅ Dependencies are assumed to be installed in the virtual environment.")
+        # If you want to keep the auto-install functionality, you would keep these lines.
+        # For a clean deployment, it's better to manage dependencies with a requirements.txt
+        # file and install them once.
     except Exception as e:
-        error_message = f"❌ **Step 1: Dependency installation failed.** The script cannot continue. Error: {e}"
-        print(f"\n❌ An error occurred during installation: {e}")
-        summary_log.append(("error", error_message))
+        print(f"❌ An error occurred during installation: {e}")
         raise
 
 # --- STEP 2: CREATE THE STREAMLIT APPLICATION FILE ---
-def create_streamlit_app_file(summary_log):
+def create_streamlit_app_file():
     """
-    Writes the Python code for the Streamlit application into a .py file and logs the result.
+    Writes the Python code for the Streamlit application into a .py file.
+    This function is also not needed anymore, as the app is already a single file.
     """
-    print("--- ✍️ STEP 2: CREATING STREAMLIT APP FILE (gemma_multimodal_app.py) ---")
+    pass # No need to create the file, as it already exists and is the main script.
 
-    app_code = '''
-import os
-# FIX: Unset the invalid environment variable before importing torch
-if 'TORCH_LOGS' in os.environ:
-    del os.environ['TORCH_LOGS']
 
+# --- Main Application Logic (Unchanged) ---
+# --- The entire application code from your original script would go here ---
+
+# Your app_code starts here, which is what the Streamlit server runs.
+# We no longer need to write it to a file, as it is the file itself.
+# We will simply execute this script directly.
+# The following is a placeholder for your Streamlit code.
+
+# --- START OF STREAMLIT APP CODE ---
 import streamlit as st
 import tempfile
 import cv2
@@ -210,11 +198,9 @@ with st.sidebar:
         st.divider()
 
         st.header("🎯 Select Feature")
-        # --- MODIFICATION START: Changed st.selectbox to st.radio ---
         feature = st.radio("Choose the type of analysis:",
             ["📝 Text → Text", "📸 Image + Text → Text", "🎥 Video (Upload) + Text → Text", "🎥 YouTube URL + Text → Text", "🎵 Audio + Text → Text", "🎬 Video + Audio + Text"],
             label_visibility="collapsed")
-        # --- MODIFICATION END ---
         
         st.divider()
 
@@ -379,138 +365,17 @@ else:
     st.info("👋 Welcome! Please load the Gemma model from the sidebar to begin.")
     st.image("https://storage.googleapis.com/gweb-aip-images/news/gemma/gemma-7b-kv-cache.gif", caption="Gemma is a family of lightweight, state-of-the-art open models from Google.", use_column_width=True)
 '''
+# --- END OF STREAMLIT APP CODE ---
 
-    try:
-        with open("gemma_multimodal_app.py", "w", encoding="utf-8") as f:
-            f.write(app_code)
-        print("--- ✅ APP FILE CREATED SUCCESSFULLY ---\n")
-        summary_log.append(("success", "✅ **Step 2: App file created.** 'gemma_multimodal_app.py' is ready."))
-    except Exception as e:
-        error_message = f"❌ **Step 2: Failed to create app file.** The script cannot launch. Error: {e}"
-        print(f"--- ❌ FAILED TO CREATE APP FILE: {e} ---\n")
-        summary_log.append(("error", error_message))
-        raise
-
-# --- STEP 3: LAUNCH THE STREAMLIT APP ---
-def launch_streamlit(summary_log):
-    """
-    Kills any old Streamlit process, starts a new one, creates a public URL using pyngrok, and logs the result.
-    """
-    print("--- 🚀 STEP 3: LAUNCHING STREAMLIT & CREATING PUBLIC URL ---")
-
-    # ⚠️ IMPORTANT: Paste your ngrok authtoken here if the one below doesn't work.
-    NGROK_AUTH_TOKEN = "30YBmNDW7XOji1e6BYS7lO1DCea_2YiLgw4UwGFWeW6NwNaiS"
-
-    try:
-        subprocess.run(["pkill", "-f", "streamlit"], capture_output=True)
-        print("...Terminated any old Streamlit processes.")
-        time.sleep(2)
-    except FileNotFoundError:
-        print("...`pkill` not found, skipping (normal on Windows).")
-
-    command = ["streamlit", "run", "gemma_multimodal_app.py", "--server.port", "8501", "--server.headless", "true", "--browser.gatherUsageStats", "false"]
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-    print("...Waiting for Streamlit server to initialize...")
-    time.sleep(10)
-
-    if process.poll() is not None:
-        print("--- ❌ STREAMLIT FAILED TO START ---")
-        stdout, stderr = process.communicate()
-        print("--- Streamlit stdout ---\n", stdout.decode())
-        print("--- Streamlit stderr ---\n", stderr.decode())
-        summary_log.append(("error", "❌ **Step 3: Streamlit launch failed.** The server could not start."))
-        return
-
-    print("...Streamlit server running. Connecting ngrok...")
-    try:
-        from pyngrok import ngrok
-        if not NGROK_AUTH_TOKEN or "PASTE_YOUR" in NGROK_AUTH_TOKEN:
-            display(HTML("""
-            <div style="border: 2px solid #ffc107; border-radius: 10px; padding: 20px; background-color: #fff8e1; margin: 20px 0;">
-                <h2 style="color: #ff8f00;">Action Required: Add Your ngrok Authtoken</h2>
-                <p>To create a public URL, you need a free ngrok authtoken.</p>
-                <ol>
-                    <li>Go to <a href="https://dashboard.ngrok.com/get-started/your-authtoken" target="_blank">your ngrok dashboard</a>.</li>
-                    <li>Copy your authtoken.</li>
-                    <li>Paste it into the `NGROK_AUTH_TOKEN` variable in this script and re-run the cell.</li>
-                </ol>
-            </div>"""))
-            summary_log.append(("error", "❌ **Step 3: ngrok launch failed.** Authtoken is missing."))
-            return
-
-        ngrok.set_auth_token(NGROK_AUTH_TOKEN)
-        for tunnel in ngrok.get_tunnels():
-            ngrok.disconnect(tunnel.public_url)
-        public_tunnel = ngrok.connect(8501)
-        public_url = public_tunnel.public_url
-        
-        # --- MODIFIED: ADDED A PRINT STATEMENT FOR TERMINAL VIEW ---
-        print("\n" + "="*80)
-        print("🎉 Your AI Assistant is Live! 🎉")
-        print(f"Open this URL in your web browser: {public_url}")
-        print("="*80 + "\n")
-        # --- END MODIFIED SECTION ---
-
-        # Original HTML display (for compatibility with interactive notebooks)
-        display(HTML(f'''
-        <div style="border: 2px solid #4CAF50; border-radius: 10px; padding: 20px; background-color: #f0fff0; margin: 20px 0;">
-            <h2 style="color: #2e7d32;">🎉 Your AI Assistant is Live!</h2>
-            <p>Click the link below to open the application in a new tab.</p>
-            <a href="{public_url}" target="_blank" style="display: inline-block; padding: 12px 24px; background-color: #4CAF50; color: white; text-decoration: none; border-radius: 5px; font-size: 16px; font-weight: bold;">
-                🚀 Open Gemma Conversational App
-            </a>
-            <hr style="margin: 20px 0;">
-            <h3 style="color: #1976d2;">📋 Instructions:</h3>
-            <ol>
-                <li>Click the link above to open the app.</li>
-                <li>In the app's sidebar, click <strong>"Load Gemma 3N Model"</strong> (this can take a few minutes).</li>
-                <li>Once loaded, select a feature from the <strong>list in the sidebar</strong> by clicking it.</li>
-                <li>Upload your media, type a question, and click "Send".</li>
-                <li>Ask follow-up questions to continue the conversation!</li>
-            </ol>
-        </div>'''))
-        summary_log.append(("success", "✅ **Step 3: App is live!** Streamlit and ngrok launched successfully."))
-    except Exception as e:
-        error_message = f"❌ **Step 3: Failed to create public URL.** Error: {e}"
-        print(f"--- ❌ FAILED TO CREATE PUBLIC URL ---")
-        print(f"Error details: {e}")
-        summary_log.append(("error", error_message))
-
-# --- NEW STEP 4: DISPLAY EXECUTION SUMMARY ---
-def display_execution_summary(summary_log):
-    """
-    Displays a final, formatted summary of the script's execution.
-    """
-    print("\n\n" + "="*80)
-    print("--- 📋 EXECUTION SUMMARY ---")
-    print("="*80)
-
-    summary_html = """
-    <div style="border: 2px solid #1976d2; border-radius: 10px; padding: 20px; background-color: #e3f2fd; margin: 20px 0; font-family: sans-serif;">
-        <h2 style="color: #1565c0; border-bottom: 2px solid #bbdefb; padding-bottom: 10px;">Execution Report</h2>
-        <ul style="list-style-type: none; padding-left: 0;">
-    """
-
-    if not summary_log:
-        summary_html += '<li style="padding: 10px; color: #555;">No actions were performed.</li>'
-    else:
-        for status, message in summary_log:
-            bg_color = "#e8f5e9" if status == "success" else "#ffcdd2"
-            text_color = "#2e7d32" if status == "success" else "#c62828"
-            summary_html += f'<li style="padding: 10px; border-radius: 5px; margin-top: 8px; background-color: {bg_color}; color: {text_color}; font-size: 16px;">{message}</li>'
-
-    summary_html += "</ul></div>"
-    display(HTML(summary_html))
-
-# --- MAIN EXECUTION BLOCK ---
+# We will run this file directly with the Streamlit command.
 if __name__ == "__main__":
-    execution_summary = []
-    try:
-        install_requirements(execution_summary)
-        create_streamlit_app_file(execution_summary)
-        launch_streamlit(execution_summary)
-    except Exception:
-        print("\n--- 🛑 SCRIPT HALTED DUE TO A CRITICAL ERROR ---")
-    finally:
-        display_execution_summary(execution_summary)
+    # We no longer need the installation and launching logic here.
+    # The `systemd` service is now responsible for running Streamlit.
+    # The dependencies should be installed manually in the virtual environment.
+
+    # This part can be safely commented out or removed entirely
+    # as the `systemd` service directly calls the `streamlit run` command.
+    print("This script is now configured to be run directly by the streamlit command.")
+    print("Please use the systemd service to start it.")
+    # The `streamlit run gemma_multimodal_app.py` command is what starts the app.
+    # The rest of the script is the application itself.
