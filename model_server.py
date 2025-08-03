@@ -111,7 +111,7 @@ def initialize_session_state():
             "🖼️ Image + Text → Text": [],
             "🎬 Video + Text → Text": [],
             "🎵 Audio + Text → Text": [],
-            "🎞️ Video + Audio → Text": [],
+        
             "🧑‍💻 Video + Audio + Text → Text": [],
         },
         "media_content": None,
