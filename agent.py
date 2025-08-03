@@ -7,39 +7,34 @@ from IPython.display import display, HTML
 # --- STEP 1: INSTALLATION OF DEPENDENCIES ---
 def install_requirements(summary_log):
     """
-    Fixes incompatibilities by pre-installing regex, numpy, and reinstalling other packages.
+    Fixes incompatibilities by reinstalling numpy, pandas, torch, and other packages.
     """
     print("--- ⚙️ STEP 1: INSTALLING PACKAGES ---")
     try:
-        # FIX 1: Pre-install the modern 'regex' package to prevent dependency errors.
-        print("🔧 Pre-installing the modern 'regex' package...")
-        regex_cmd = ["sudo", sys.executable, "-m", "pip", "install", "regex"]
-        subprocess.check_call(regex_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-        print("✅ Modern 'regex' package installed.")
-
-        # FIX 2: Force downgrade of NumPy to a compatible version (< 2.0).
-        print("🔧 Forcing NumPy version < 2.0...")
-        numpy_cmds = [
-            ["sudo", sys.executable, "-m", "pip", "uninstall", "-y", "numpy"],
-            ["sudo", sys.executable, "-m", "pip", "install", "numpy==1.26.4"]
+        # FIX: Uninstall key packages to ensure a clean slate and resolve binary conflicts.
+        print("🔧 Uninstalling key packages (numpy, pandas, torch) for a clean reinstall...")
+        uninstall_cmd = [
+            "sudo", sys.executable, "-m", "pip", "uninstall", "-y",
+            "numpy", "pandas", "torch", "torchvision", "datasets"
         ]
-        for cmd in numpy_cmds:
-            subprocess.check_call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-        print("✅ Installed compatible NumPy version (1.26.4).")
+        subprocess.check_call(uninstall_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+        print("✅ Uninstalled key packages.")
 
-        # FIX 3: Reinstall torch/torchvision for compatibility.
-        print("🔧 Ensuring torch/torchvision compatibility...")
-        uninstall_torch_cmd = ["sudo", sys.executable, "-m", "pip", "uninstall", "-y", "torch", "torchvision"]
-        subprocess.check_call(uninstall_torch_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-        print("✅ Uninstalled previous PyTorch versions.")
+        # Step 1: Install the correct, compatible NumPy version first.
+        print("🔧 Installing compatible NumPy version...")
+        numpy_cmd = ["sudo", sys.executable, "-m", "pip", "install", "numpy==1.26.4"]
+        subprocess.check_call(numpy_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+        print("✅ Installed NumPy 1.26.4.")
 
-        # Reinstall all other packages.
+        # Step 2: Reinstall all other packages. Pip will now fetch compatible versions.
         install_command = [
             "sudo", sys.executable, "-m", "pip", "install", "--no-cache-dir", "-U",
             "unsloth[colab-new]@git+https://github.com/unslothai/unsloth.git",
             "torch", "torchvision",
+            "pandas",
+            "datasets",
             "streamlit", "nest_asyncio", "opencv-python",
-            "Pillow", "timm", "yt-dlp"
+            "Pillow", "timm", "yt-dlp", "regex"
         ]
         print("📦 Installing all other application packages...")
         subprocess.check_call(install_command, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
