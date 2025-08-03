@@ -261,7 +261,7 @@ def download_youtube_video(url):
         return None
 
 @st.cache_data(show_spinner="🎬 Extracting video frames...")
-def extract_video_frames(video_path, max_frames=4):  # Reduced to 4 frames
+def extract_video_frames(video_path, max_frames=50):  # Reduced to 4 frames
     """Extract frames from video with improved error handling"""
     frames = []
     cap = None
