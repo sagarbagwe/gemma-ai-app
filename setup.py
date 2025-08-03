@@ -767,4 +767,4 @@ st.markdown("""
     🤖 Powered by Gemma 3N via Unsloth | Built with Streamlit<br>
     💡 Tip: Use the "New Chat" button to start fresh conversations with different media
 </div>
-""", unsafe_allow_html=True)"
+""", unsafe_allow_html=True)
