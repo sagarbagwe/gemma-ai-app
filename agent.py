@@ -5,20 +5,45 @@ import time
 from IPython.display import display, HTML
 import socket
 
-# --- STEP 1: INSTALLATION OF DEPENDENCIES ---
+# Define the virtual environment directory
+VENV_DIR = "gemma_env"
+
+# --- STEP 1: CREATE VENV & INSTALL DEPENDENCIES ---
 def install_requirements(summary_log):
     """
-    Installs all necessary Python packages robustly and logs the result.
+    Creates a virtual environment and installs all necessary Python packages robustly.
     """
-    print("--- ⚙️ STEP 1: INSTALLING ALL PACKAGES ---")
+    print("--- ⚙️ STEP 1: CREATING VENV & INSTALLING PACKAGES ---")
+    
+    # --- Create Virtual Environment ---
+    if not os.path.exists(VENV_DIR):
+        print(f"📦 Creating virtual environment in '{VENV_DIR}'...")
+        try:
+            subprocess.check_call([sys.executable, "-m", "venv", VENV_DIR])
+            print("✅ Virtual environment created successfully.")
+        except subprocess.CalledProcessError as e:
+            error_message = f"❌ **Step 1: Failed to create virtual environment.** Error: {e}"
+            print(f"\n{error_message}")
+            summary_log.append(("error", error_message))
+            raise
+    else:
+        print(f"✅ Virtual environment '{VENV_DIR}' already exists.")
+
+    # --- Determine python executable path within the venv ---
+    # This handles both Windows and Linux/macOS environments
+    if sys.platform == "win32":
+        python_executable = os.path.join(VENV_DIR, "Scripts", "python.exe")
+    else:
+        python_executable = os.path.join(VENV_DIR, "bin", "python")
+
+    # --- Install Packages into the Venv ---
     try:
-        # A single, robust list of all required packages
         packages = [
             "unsloth",
             "torch",
             "transformers",
             "accelerate",
-            "bitsandbytes", # <-- ADDED MISSING DEPENDENCY
+            "bitsandbytes",
             "streamlit",
             "nest_asyncio",
             "opencv-python",
@@ -28,14 +53,13 @@ def install_requirements(summary_log):
             "numpy<2.2"
         ]
         
-        print(f"📦 Installing: {', '.join(packages)}")
+        print(f"📦 Installing packages into '{VENV_DIR}': {', '.join(packages)}")
         
-        # Use a single, clean pip install command. Output is not suppressed for better debugging.
-        install_command = [sys.executable, "-m", "pip", "install"] + packages
+        install_command = [python_executable, "-m", "pip", "install"] + packages
         subprocess.check_call(install_command)
         
         print("\n--- ✅ INSTALLATION COMPLETE ---\n")
-        summary_log.append(("success", "✅ **Step 1: Dependencies installed.** All required packages are ready."))
+        summary_log.append(("success", "✅ **Step 1: Dependencies installed in venv.** All required packages are ready."))
     except Exception as e:
         error_message = f"❌ **Step 1: Dependency installation failed.** The script cannot continue. Error: {e}"
         print(f"\n❌ An error occurred during installation: {e}")
@@ -203,10 +227,16 @@ else:
 # --- STEP 3: LAUNCH THE STREAMLIT APP DIRECTLY ---
 def launch_streamlit(summary_log):
     """
-    Kills any old Streamlit process and starts a new one directly.
+    Kills any old Streamlit process and starts a new one directly from the venv.
     """
     print("--- 🚀 STEP 3: LAUNCHING STREAMLIT APPLICATION ---")
     PORT = 8501
+
+    # --- Determine streamlit executable path within the venv ---
+    if sys.platform == "win32":
+        streamlit_executable = os.path.join(VENV_DIR, "Scripts", "streamlit.exe")
+    else:
+        streamlit_executable = os.path.join(VENV_DIR, "bin", "streamlit")
 
     try:
         subprocess.run(["pkill", "-f", "streamlit run gemma_multimodal_app.py"], capture_output=True)
@@ -215,7 +245,7 @@ def launch_streamlit(summary_log):
     except FileNotFoundError:
         print("...`pkill` not found, skipping (normal on Windows).")
 
-    command = ["streamlit", "run", "gemma_multimodal_app.py", "--server.port", str(PORT), "--server.headless", "true"]
+    command = [streamlit_executable, "run", "gemma_multimodal_app.py", "--server.port", str(PORT), "--server.headless", "true"]
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     print("...Streamlit server is starting in the background.")
     time.sleep(10)
@@ -279,4 +309,3 @@ if __name__ == "__main__":
         print(f"\n--- 🛑 SCRIPT HALTED DUE TO A CRITICAL ERROR: {e} ---")
     finally:
         display_execution_summary(execution_summary)
-
