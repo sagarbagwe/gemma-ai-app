@@ -254,7 +254,9 @@ def transcribe_audio(_asr_pipeline, audio_bytes):
     if _asr_pipeline is None:
         return "Error: ASR model not available."
     try:
-        result = _asr_pipeline(audio_bytes)
+        # The pipeline can directly handle bytes
+        # FIXED: Added return_timestamps=True to enable long-form transcription for audio > 30s
+        result = _asr_pipeline(audio_bytes, return_timestamps=True)
         transcription = result.get("text", "").strip()
         logger.info(f"Audio transcribed successfully. Length: {len(transcription)} chars.")
         if not transcription:
@@ -648,6 +650,25 @@ else:
         if not history and "Text" not in current_feature and not st.session_state.media_content:
             st.warning("Please upload the required media for a new chat.")
         else:
+            # Re-display chat history immediately after new prompt
+            with st.chat_message("user"):
+                if not history and st.session_state.media_content:
+                     # Display media if it was part of the first message
+                    media_type = st.session_state.media_content["type"]
+                    media_data = st.session_state.media_content["content"]
+                    if media_type == "image":
+                        st.image(media_data, caption="🖼️ Attached Image", width=300)
+                    elif media_type == "video":
+                        with st.expander(f"🖼️ View {len(media_data)} attached frames"):
+                            cols = st.columns(min(4, len(media_data)))
+                            for idx, frame in enumerate(media_data):
+                                cols[idx % 4].image(frame, use_column_width=True, caption=f"Frame {idx+1}")
+                    elif media_type == "audio":
+                        st.info("🎵 Audio file submitted for analysis.")
+
+                # Display the actual text prompt
+                st.markdown(prompt)
+
             user_content = []
             final_prompt = prompt
             
