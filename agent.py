@@ -18,6 +18,7 @@ def install_requirements(summary_log):
             "torch",
             "transformers",
             "accelerate",
+            "bitsandbytes", # <-- ADDED MISSING DEPENDENCY
             "streamlit",
             "nest_asyncio",
             "opencv-python",
