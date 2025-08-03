@@ -7,35 +7,28 @@ from IPython.display import display, HTML
 # --- STEP 1: INSTALLATION OF DEPENDENCIES ---
 def install_requirements(summary_log):
     """
-    Fixes incompatibility by reinstalling numpy, torch, and other packages.
+    Fixes incompatibility by reinstalling torch, torchvision, and other packages.
     """
     print("--- ⚙️ STEP 1: INSTALLING PACKAGES ---")
     try:
-        # FIX 1: Force downgrade of NumPy to a compatible version (< 2.0)
-        print("🔧 Forcing NumPy version < 2.0 to fix incompatibility...")
-        numpy_cmds = [
-            ["sudo", sys.executable, "-m", "pip", "uninstall", "-y", "numpy"],
-            ["sudo", sys.executable, "-m", "pip", "install", "numpy==1.26.4"]
+        # FIX: Force uninstall of torch and torchvision to resolve incompatibility
+        print("🔧 Uninstalling existing PyTorch versions to ensure compatibility...")
+        uninstall_command = [
+            "sudo", sys.executable, "-m", "pip", "uninstall", "-y", "torch", "torchvision"
         ]
-        for cmd in numpy_cmds:
-            subprocess.check_call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-        print("✅ Installed compatible NumPy version (1.26.4).")
-
-        # FIX 2: Reinstall torch/torchvision for compatibility
-        print("🔧 Ensuring torch/torchvision compatibility by reinstalling...")
-        uninstall_torch_cmd = ["sudo", sys.executable, "-m", "pip", "uninstall", "-y", "torch", "torchvision"]
-        subprocess.check_call(uninstall_torch_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+        # Run the uninstall command
+        subprocess.check_call(uninstall_command, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
         print("✅ Uninstalled previous PyTorch versions.")
 
-        # Reinstall all other packages
+        # Reinstall all packages together to get compatible versions
         install_command = [
             "sudo", sys.executable, "-m", "pip", "install", "--no-cache-dir", "-U",
             "unsloth[colab-new]@git+https://github.com/unslothai/unsloth.git",
-            "torch", "torchvision",
+            "torch", "torchvision", # Explicitly install to ensure they match
             "streamlit", "nest_asyncio", "opencv-python",
-            "Pillow", "timm", "yt-dlp"
+            "Pillow", "timm", "yt-dlp", "numpy<2.2"
         ]
-        print("📦 Installing all other application packages...")
+        print("📦 Installing all packages with compatible versions (using sudo)...")
         subprocess.check_call(install_command, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
         
         print("✅ All packages installed successfully.")
@@ -52,8 +45,37 @@ def create_streamlit_app_file(summary_log):
     Writes the Python code for the Streamlit application.
     """
     print("--- ✍️ STEP 2: CREATING STREAMLIT APP FILE (gemma_multimodal_app.py) ---")
-    # The app code itself doesn't need to change from the last version.
-    full_app_code = '''
+
+    app_code = '''
+import os
+if 'TORCH_LOGS' in os.environ:
+    del os.environ['TORCH_LOGS']
+
+# Import unsloth FIRST to apply optimizations
+import unsloth
+from unsloth import FastModel
+
+import streamlit as st
+import tempfile
+import cv2
+import numpy as np
+from PIL import Image
+import torch
+from transformers import TextStreamer
+import torch._dynamo
+import yt_dlp
+
+torch._dynamo.config.cache_size_limit = 64
+torch._dynamo.config.suppress_errors = True
+st.set_page_config(page_title="Gemma 3N Conversational AI", page_icon="🤖", layout="wide")
+
+# (The rest of the app_code remains the same)
+# ...
+'''
+    try:
+        # Abridged the unchanged app_code for brevity in this response, 
+        # but the full code will be written to the file.
+        full_app_code = '''
 import os
 if 'TORCH_LOGS' in os.environ:
     del os.environ['TORCH_LOGS']
@@ -150,7 +172,6 @@ with st.sidebar:
 if not st.session_state.model_loaded:
     st.info("👋 Welcome! Please load the Gemma model from the sidebar to begin.")
 '''
-    try:
         with open("gemma_multimodal_app.py", "w", encoding="utf-8") as f:
             f.write(full_app_code)
         print("--- ✅ APP FILE CREATED SUCCESSFULLY ---\n")
@@ -171,7 +192,7 @@ def launch_streamlit(summary_log):
         subprocess.run(["pkill", "-f", "streamlit"], check=False)
         time.sleep(2)
     except FileNotFoundError:
-        pass # pkill not on all systems
+        pass
         
     command = ["streamlit", "run", "gemma_multimodal_app.py", "--server.port", "8501", "--server.address", "0.0.0.0", "--server.headless", "true"]
     process = subprocess.Popen(command)
