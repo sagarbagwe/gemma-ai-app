@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 from PIL import Image
 import torch
+from unsloth import FastModel
 from transformers import TextStreamer, pipeline
 import yt_dlp
 import logging
@@ -16,9 +17,6 @@ import time
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Import unsloth first for optimizations
-from unsloth import FastModel
 
 # Advanced PyTorch optimizations for faster inference
 torch._dynamo.config.cache_size_limit = 1000  # Increase cache size
@@ -174,6 +172,11 @@ def load_gemma_model():
             attn_implementation="eager",  # Use eager attention (faster for Gemma3N)
         )
         
+        # FIXED: Set pad_token_id to eos_token_id if it's not set. This is crucial for model generation.
+        if tokenizer.pad_token_id is None:
+            tokenizer.pad_token_id = tokenizer.eos_token_id
+            logger.info("Set pad_token_id to eos_token_id to fix generation issues.")
+
         # Critical optimizations for inference speed
         model.eval()  # Set to evaluation mode
         
@@ -216,7 +219,7 @@ def load_gemma_model():
                         max_new_tokens=5, 
                         do_sample=False,
                         use_cache=True,
-                        pad_token_id=tokenizer.eos_token_id if tokenizer.eos_token_id else tokenizer.pad_token_id
+                        pad_token_id=tokenizer.pad_token_id
                     )
             logger.info("Model warmup completed successfully")
         except Exception as warmup_error:
@@ -236,10 +239,12 @@ def load_asr_model():
     try:
         logger.info("Loading ASR model...")
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        # Using a more advanced, distilled version of Whisper for better performance and accuracy.
         asr_pipeline = pipeline(
             "automatic-speech-recognition", 
-            model="openai/whisper-tiny.en",
-            device=device
+            model="distil-whisper/distil-large-v2",
+            device=device,
+            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32
         )
         logger.info(f"ASR model loaded successfully on device: {device}")
         return asr_pipeline
@@ -418,7 +423,7 @@ def do_gemma_inference(messages, max_new_tokens, temperature):
             "max_new_tokens": min(int(max_new_tokens), 512),
             "temperature": float(temperature) if temperature > 0.1 else 0.1,
             "do_sample": True if temperature > 0.1 else False,
-            "pad_token_id": st.session_state.tokenizer.eos_token_id or st.session_state.tokenizer.pad_token_id,
+            "pad_token_id": st.session_state.tokenizer.pad_token_id,
             "eos_token_id": st.session_state.tokenizer.eos_token_id,
             "use_cache": True,
             "num_beams": 1,
@@ -714,3 +719,4 @@ st.markdown("""
     🤖 Powered by Gemma 3N via Unsloth | Built with Streamlit
 </div>
 """, unsafe_allow_html=True)
+
