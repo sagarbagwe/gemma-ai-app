@@ -1,8 +1,20 @@
+import subprocess
+import sys
 import os
-# FIX: Unset the invalid environment variable before importing torch
+from IPython.display import display, HTML
+
+# --- STEP 1: DEFINE THE STREAMLIT APPLICATION CODE ---
+# This is the final, working code for your Streamlit app.
+# It will be written to a file named 'agent.py'.
+
+app_code = r'''
+import os
+# FIX: Unset an environment variable that can cause issues with torch
 if 'TORCH_LOGS' in os.environ:
     del os.environ['TORCH_LOGS']
 
+# Correct Import Order for Unsloth
+from unsloth import FastModel
 import streamlit as st
 import tempfile
 import cv2
@@ -12,7 +24,6 @@ import torch
 from transformers import TextStreamer
 import torch._dynamo
 import yt_dlp
-from unsloth import FastModel
 
 # Configure torch dynamo for potential speedups
 torch._dynamo.config.cache_size_limit = 64
@@ -315,3 +326,72 @@ elif feature == "🎬 Video + Audio + Text":
             handle_chat_submission(messages_key, text_prompt, content_gen)
     else: st.info("Please upload a video to begin.")
     st.markdown('</div>', unsafe_allow_html=True)
+'''
+
+
+def run_setup():
+    """
+    Installs dependencies and creates the Streamlit app file.
+    """
+    try:
+        # --- STEP 2: INSTALLATION OF DEPENDENCIES ---
+        print("--- ⚙️ STEP 1: INSTALLING PACKAGES ---")
+        print("📦 Forcing re-installation of unsloth and its core dependencies...")
+        # Use check_call to halt on error. Use DEVNULL to keep logs clean.
+        subprocess.check_call([
+            sys.executable, "-m", "pip", "install", "--no-cache-dir", "--force-reinstall",
+            "unsloth[colab-new]@git+https://github.com/unslothai/unsloth.git"
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+        print("✅ Unsloth installed.")
+
+        print("\n📦 Pinning NumPy version...")
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "numpy<2.2"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT
+        )
+        print("✅ NumPy pinned.")
+
+        print("\n📦 Installing remaining application packages...")
+        app_packages = ["streamlit", "nest_asyncio", "opencv-python", "Pillow", "timm", "yt-dlp", "ipython"]
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "-U"] + app_packages,
+            stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT
+        )
+        print("✅ Application packages installed.")
+        print("\n--- ✅ INSTALLATION COMPLETE ---\n")
+
+        # --- STEP 3: CREATE THE STREAMLIT APPLICATION FILE ---
+        print("--- ✍️ STEP 2: CREATING STREAMLIT APP FILE (agent.py) ---")
+        with open("agent.py", "w", encoding="utf-8") as f:
+            f.write(app_code)
+        print("--- ✅ APP FILE CREATED SUCCESSFULLY ---\n")
+
+    except Exception as e:
+        print(f"\n--- ❌ AN ERROR OCCURRED DURING SETUP ---")
+        print(f"Error: {e}")
+        return
+
+    # --- STEP 4: DISPLAY FINAL INSTRUCTIONS ---
+    instructions_html = """
+    <div style="border: 2px solid #4CAF50; border-radius: 10px; padding: 20px; background-color: #f0fff0; margin: 20px 0; font-family: sans-serif;">
+        <h2 style="color: #2e7d32;">✅ Setup Complete!</h2>
+        <p>Your environment is ready and the <strong>agent.py</strong> file has been created.</p>
+        <hr style="margin: 20px 0;">
+        <h3 style="color: #1976d2;">🚀 What to do next:</h3>
+        <p>To run your AI application, open your terminal and follow these steps:</p>
+        <ol>
+            <li style="margin-bottom: 10px;">Make sure your virtual environment is still active. If not, reactivate it:
+                <br><code style="background-color: #e8f5e9; padding: 5px 8px; border-radius: 5px; font-family: monospace;">source venv/bin/activate</code>
+            </li>
+            <li style="margin-bottom: 10px;">Run the application using the <strong>streamlit</strong> command:
+                <br><code style="background-color: #e8f5e9; padding: 5px 8px; border-radius: 5px; font-family: monospace;">streamlit run agent.py</code>
+            </li>
+            <li>Open the URL provided by Streamlit in your web browser to use the app.</li>
+        </ol>
+    </div>
+    """
+    display(HTML(instructions_html))
+
+
+if __name__ == "__main__":
+    run_setup()
