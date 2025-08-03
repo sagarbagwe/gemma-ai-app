@@ -9,12 +9,14 @@ from PIL import Image
 import torch
 from transformers import TextStreamer
 import yt_dlp
-from unsloth import FastModel
 import logging
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Import unsloth first for optimizations
+from unsloth import FastModel
 
 # Fix PyTorch recompilation issues - MUST BE SET EARLY
 torch._dynamo.config.cache_size_limit = 1000  # Increase cache size
@@ -95,18 +97,21 @@ def load_gemma_model():
         # Set model to eval mode to prevent training-related recompilations
         model.eval()
         
-        # Ensure model is on the correct device
-        if torch.cuda.is_available():
-            model = model.cuda()
-            logger.info("Model loaded on CUDA")
-        else:
-            logger.warning("CUDA not available, using CPU")
+        # Check if model is already on CUDA (quantized models are automatically placed)
+        device = next(model.parameters()).device
+        logger.info(f"Model loaded on device: {device}")
+        
+        # For quantized models, don't manually move to CUDA as they're already optimized
+        if "cuda" not in str(device) and torch.cuda.is_available():
+            logger.warning("Model not on CUDA but CUDA is available. This might be expected for quantized models.")
         
         # Warm up the model with a dummy input to trigger initial compilation
         try:
             dummy_input = tokenizer("Hello", return_tensors="pt", padding=True)
-            if torch.cuda.is_available():
-                dummy_input = {k: v.cuda() for k, v in dummy_input.items()}
+            # Don't move quantized models to CUDA manually
+            device = next(model.parameters()).device
+            if "cuda" in str(device):
+                dummy_input = {k: v.to(device) for k, v in dummy_input.items()}
             
             with torch.inference_mode():
                 _ = model.generate(**dummy_input, max_new_tokens=1, do_sample=False)
@@ -269,9 +274,9 @@ def do_gemma_inference(messages_for_api, max_new_tokens, temperature):
         if inputs is None:
             return "Sorry, I couldn't process your message. Please try again."
             
-        # Move to GPU if available
-        if torch.cuda.is_available():
-            inputs = {k: v.cuda() for k, v in inputs.items()}
+        # Move to the same device as the model (don't assume CUDA for quantized models)
+        model_device = next(model.parameters()).device
+        inputs = {k: v.to(model_device) for k, v in inputs.items()}
         
         input_ids_length = inputs['input_ids'].shape[1]
         
@@ -410,12 +415,16 @@ with st.sidebar:
     
     # System info
     st.header("📊 System Info")
-    if torch.cuda.is_available():
-        gpu_info = torch.cuda.get_device_name(0)
-        gpu_memory = torch.cuda.get_device_properties(0).total_memory // (1024**3)
-        st.success(f"🖥️ GPU: {gpu_info}\n💾 Memory: {gpu_memory}GB")
-    else:
-        st.warning("🖥️ Running on CPU")
+    try:
+        model_device = next(model.parameters()).device
+        if "cuda" in str(model_device):
+            gpu_info = torch.cuda.get_device_name(0)
+            gpu_memory = torch.cuda.get_device_properties(0).total_memory // (1024**3)
+            st.success(f"🖥️ GPU: {gpu_info}\n💾 Memory: {gpu_memory}GB\n📍 Model Device: {model_device}")
+        else:
+            st.info(f"🖥️ Model Device: {model_device}")
+    except Exception as e:
+        st.warning(f"⚠️ Device info unavailable: {e}")
 
 # --- MEDIA UPLOAD & PROCESSING AREA ---
 if not st.session_state.media_content:
