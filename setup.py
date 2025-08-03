@@ -191,7 +191,7 @@ def download_youtube_video(url):
         return None
 
 @st.cache_data(show_spinner="🎬 Extracting video frames...")
-def extract_video_frames(video_path, max_frames=8):
+def extract_video_frames(video_path, max_frames=6):  # Reduced from 8 to 6
     """Extract frames from video with improved error handling"""
     frames = []
     cap = None
@@ -249,9 +249,57 @@ def extract_video_frames(video_path, max_frames=8):
             
     return frames
 
+def truncate_conversation_history(messages, max_tokens=1500):
+    """
+    Truncate conversation history to fit within token limit while preserving context
+    """
+    if not messages:
+        return messages
+    
+    try:
+        # Always keep the last user message (most recent)
+        last_message = messages[-1]
+        
+        # If only one message, return as is
+        if len(messages) == 1:
+            return messages
+        
+        # Work backwards through messages to build context within token limit
+        truncated_messages = [last_message]
+        current_tokens = 0
+        
+        # Estimate tokens (rough approximation: 1 token ≈ 4 characters)
+        def estimate_tokens(msg_content):
+            total_chars = 0
+            for part in msg_content:
+                if part["type"] == "text":
+                    total_chars += len(part["text"])
+                elif part["type"] == "image":
+                    total_chars += 100  # Rough estimate for image tokens
+            return total_chars // 4
+        
+        # Add messages from newest to oldest until we hit token limit
+        for message in reversed(messages[:-1]):
+            msg_tokens = estimate_tokens(message["content"])
+            if current_tokens + msg_tokens < max_tokens:
+                truncated_messages.insert(0, message)
+                current_tokens += msg_tokens
+            else:
+                break
+        
+        logger.info(f"Truncated conversation: {len(messages)} -> {len(truncated_messages)} messages")
+        logger.info(f"Estimated tokens: {current_tokens}")
+        
+        return truncated_messages
+        
+    except Exception as e:
+        logger.error(f"Error truncating conversation: {e}")
+        # Fallback: return only the last 2 messages
+        return messages[-2:] if len(messages) > 2 else messages
+
 def do_gemma_inference(messages, max_new_tokens, temperature):
     """
-    Perform model inference with comprehensive error handling and optimization
+    Perform model inference with conversation history management
     """
     try:
         st.session_state.inference_count += 1
@@ -260,10 +308,13 @@ def do_gemma_inference(messages, max_new_tokens, temperature):
         # Validate inputs
         if not messages:
             return "I need a message to respond to."
-            
+        
+        # Truncate conversation history to prevent token overflow
+        truncated_messages = truncate_conversation_history(messages, max_tokens=1500)
+        
         # Prepare inputs
         inputs = st.session_state.tokenizer.apply_chat_template(
-            messages, 
+            truncated_messages, 
             add_generation_prompt=True, 
             tokenize=True, 
             return_dict=True, 
@@ -276,12 +327,22 @@ def do_gemma_inference(messages, max_new_tokens, temperature):
         
         input_ids_length = inputs['input_ids'].shape[1]
         
-        # Check sequence length
+        # Check sequence length (should now be within limits)
         if input_ids_length > 2048:
-            logger.warning(f"Input sequence too long: {input_ids_length}")
-            return "Your message is too long. Please try a shorter message."
+            logger.warning(f"Input sequence still too long after truncation: {input_ids_length}")
+            # Emergency fallback: use only the last message
+            last_message_only = [messages[-1]]
+            inputs = st.session_state.tokenizer.apply_chat_template(
+                last_message_only, 
+                add_generation_prompt=True, 
+                tokenize=True, 
+                return_dict=True, 
+                return_tensors="pt"
+            )
+            inputs = {k: v.to(model_device) for k, v in inputs.items()}
+            input_ids_length = inputs['input_ids'].shape[1]
         
-        logger.info(f"Input length: {input_ids_length} tokens")
+        logger.info(f"Final input length: {input_ids_length} tokens")
         
         # Generation configuration
         generation_config = {
@@ -414,13 +475,18 @@ else:
     
     st.subheader(f"💬 {current_feature}")
     
-    # Clear chat button
-    col1, col2 = st.columns([1, 4])
+    # Clear chat button with token info
+    col1, col2 = st.columns([2, 3])
     with col1:
         if st.button("🗑️ New Chat", use_container_width=True):
             st.session_state.chat_histories[current_feature] = []
             st.session_state.media_content = None
             st.rerun()
+    with col2:
+        # Show conversation length info
+        msg_count = len(history)
+        if msg_count > 0:
+            st.info(f"💬 {msg_count} messages | Conversation will auto-truncate if too long")
     
     # Display chat history
     chat_container = st.container()
@@ -487,7 +553,7 @@ else:
                             cols = st.columns(min(4, len(frames)))
                             for idx, frame in enumerate(frames):
                                 with cols[idx % 4]:
-                                    st.image(frame, use_column_width=True, caption=f"Frame {idx+1}")
+                                    st.image(frame, use_container_width=True, caption=f"Frame {idx+1}")
                         st.session_state.media_content = {"type": "video", "content": frames}
                         media_uploaded = True
             
@@ -536,8 +602,8 @@ else:
                 if media_type == "image":
                     user_content.insert(0, {"type": "image", "image": media_data})
                 elif media_type == "video":
-                    # Add frames to content
-                    frame_content = [{"type": "image", "image": frame} for frame in media_data[:8]]
+                    # Add fewer frames to prevent token limit issues
+                    frame_content = [{"type": "image", "image": frame} for frame in media_data[:4]]  # Reduced from 8 to 4
                     user_content = frame_content + user_content
                 elif media_type == "audio":
                     user_content.insert(0, {"type": "audio", "audio": media_data})
@@ -561,7 +627,7 @@ else:
                             cols = st.columns(min(4, len(media_data)))
                             for idx, frame in enumerate(media_data):
                                 with cols[idx % 4]:
-                                    st.image(frame, use_column_width=True, caption=f"Frame {idx+1}")
+                                    st.image(frame, use_container_width=True, caption=f"Frame {idx+1}")
                     elif media_type == "audio":
                         st.audio(st.session_state.media_content["content"], format="audio/mp3")
                 
