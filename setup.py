@@ -123,6 +123,35 @@ def initialize_session_state():
 
 initialize_session_state()
 
+# --- UTILITY FUNCTIONS ---
+def truncate_conversation_history(messages, max_tokens=1500):
+    """
+    Truncate conversation history to prevent token overflow
+    """
+    if not messages:
+        return messages
+    
+    # Always keep the system message (if present) and the last user message
+    truncated = []
+    
+    # Keep the last few messages to maintain context
+    if len(messages) <= 4:
+        return messages
+    
+    # Keep system message if it exists
+    if messages[0].get("role") == "system":
+        truncated.append(messages[0])
+        start_idx = 1
+    else:
+        start_idx = 0
+    
+    # Keep the last 3 message pairs (6 messages total)
+    recent_messages = messages[max(start_idx, len(messages) - 6):]
+    truncated.extend(recent_messages)
+    
+    logger.info(f"Truncated conversation from {len(messages)} to {len(truncated)} messages")
+    return truncated
+
 # --- MODEL LOADING FUNCTION ---
 @st.cache_resource(show_spinner="🧠 Loading Gemma 3N Model... This may take a few minutes on first run.")
 def load_gemma_model():
@@ -144,15 +173,22 @@ def load_gemma_model():
         
         # Critical optimizations for inference speed
         model.eval()  # Set to evaluation mode
-        model = model.half()  # Use half precision for faster inference
+        
+        # FIXED: Don't call .half() on quantized models
+        # Quantized models are already optimized and don't support .half()
         
         # Enable KV-cache for faster sequential generation
         model.config.use_cache = True
         
-        # Compile the model for maximum speed (torch 2.0+)
+        # Try to compile the model for maximum speed (torch 2.0+)
+        # But be more conservative with quantized models
         try:
-            model = torch.compile(model, mode="reduce-overhead")
-            logger.info("Model compiled with torch.compile for maximum speed")
+            # Only compile if not quantized or if compilation is known to work
+            if hasattr(model, 'config') and not getattr(model.config, 'quantization_config', None):
+                model = torch.compile(model, mode="reduce-overhead")
+                logger.info("Model compiled with torch.compile for maximum speed")
+            else:
+                logger.info("Skipping torch.compile for quantized model to avoid issues")
         except Exception as compile_error:
             logger.warning(f"Model compilation failed, using uncompiled model: {compile_error}")
         
@@ -162,14 +198,16 @@ def load_gemma_model():
         
         # Warm up the model with multiple passes for optimal performance
         try:
-            dummy_inputs = [
-                "Hello",
-                "What is this image?",
-                "Explain this video frame"
-            ]
+            dummy_inputs = ["Hello", "What is this?", "Explain this."]
             
             for dummy_text in dummy_inputs:
-                dummy_input = tokenizer(dummy_text, return_tensors="pt", padding=True)
+                dummy_input = tokenizer(
+                    dummy_text, 
+                    return_tensors="pt", 
+                    padding=True, 
+                    truncation=True,
+                    max_length=512
+                )
                 if "cuda" in str(device):
                     dummy_input = {k: v.to(device) for k, v in dummy_input.items()}
                 
@@ -179,9 +217,9 @@ def load_gemma_model():
                         max_new_tokens=5, 
                         do_sample=False,
                         use_cache=True,
-                        pad_token_id=tokenizer.eos_token_id
+                        pad_token_id=tokenizer.eos_token_id if tokenizer.eos_token_id else tokenizer.pad_token_id
                     )
-            logger.info("Model warmup completed with multiple scenarios")
+            logger.info("Model warmup completed successfully")
         except Exception as warmup_error:
             logger.warning(f"Model warmup failed: {warmup_error}")
         
@@ -193,7 +231,6 @@ def load_gemma_model():
         st.error(f"Failed to load model: {e}")
         st.stop()
 
-# --- UTILITY FUNCTIONS ---
 @st.cache_data(show_spinner="📥 Downloading YouTube video...")
 def download_youtube_video(url):
     """Download YouTube video with error handling"""
@@ -224,7 +261,7 @@ def download_youtube_video(url):
         return None
 
 @st.cache_data(show_spinner="🎬 Extracting video frames...")
-def extract_video_frames(video_path, max_frames=6):  # Reduced from 8 to 6
+def extract_video_frames(video_path, max_frames=4):  # Reduced to 4 frames
     """Extract frames from video with improved error handling"""
     frames = []
     cap = None
@@ -259,8 +296,8 @@ def extract_video_frames(video_path, max_frames=6):  # Reduced from 8 to 6
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 pil_image = Image.fromarray(rgb_frame)
                 
-                # Resize frame if too large
-                max_size = 512
+                # Resize frame if too large to reduce memory usage
+                max_size = 384  # Reduced from 512
                 if max(pil_image.size) > max_size:
                     pil_image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
                 
@@ -296,46 +333,67 @@ def do_gemma_inference(messages, max_new_tokens, temperature):
             return "I need a message to respond to."
         
         # Truncate conversation history to prevent token overflow
-        truncated_messages = truncate_conversation_history(messages, max_tokens=1500)
+        truncated_messages = truncate_conversation_history(messages, max_tokens=1200)  # Reduced limit
         
         # Prepare inputs with optimizations
-        inputs = st.session_state.tokenizer.apply_chat_template(
-            truncated_messages, 
-            add_generation_prompt=True, 
-            tokenize=True, 
-            return_dict=True, 
-            return_tensors="pt"
-        )
+        try:
+            inputs = st.session_state.tokenizer.apply_chat_template(
+                truncated_messages, 
+                add_generation_prompt=True, 
+                tokenize=True, 
+                return_dict=True, 
+                return_tensors="pt"
+            )
+        except Exception as template_error:
+            logger.error(f"Chat template error: {template_error}")
+            # Fallback: use simple text concatenation
+            text_content = ""
+            for msg in truncated_messages:
+                role = msg.get("role", "user")
+                content = msg.get("content", [])
+                if isinstance(content, list):
+                    text_parts = [part.get("text", "") for part in content if part.get("type") == "text"]
+                    text_content += f"{role}: {' '.join(text_parts)}\n"
+                else:
+                    text_content += f"{role}: {content}\n"
+            
+            text_content += "assistant:"
+            inputs = st.session_state.tokenizer(text_content, return_tensors="pt", truncation=True, max_length=1500)
         
         # Move to the same device as the model
         model_device = next(st.session_state.model.parameters()).device
         inputs = {k: v.to(model_device) for k, v in inputs.items()}
         
         input_ids_length = inputs['input_ids'].shape[1]
+        logger.info(f"Input length: {input_ids_length} tokens")
         
-        # Check sequence length (should now be within limits)
-        if input_ids_length > 2048:
-            logger.warning(f"Input sequence still too long after truncation: {input_ids_length}")
+        # Final safety check for sequence length
+        if input_ids_length > 1800:  # Conservative limit
+            logger.warning(f"Input sequence too long: {input_ids_length}, using emergency fallback")
             # Emergency fallback: use only the last message
-            last_message_only = [messages[-1]]
-            inputs = st.session_state.tokenizer.apply_chat_template(
-                last_message_only, 
-                add_generation_prompt=True, 
-                tokenize=True, 
-                return_dict=True, 
-                return_tensors="pt"
-            )
-            inputs = {k: v.to(model_device) for k, v in inputs.items()}
-            input_ids_length = inputs['input_ids'].shape[1]
-        
-        logger.info(f"Final input length: {input_ids_length} tokens")
+            last_message = truncated_messages[-1] if truncated_messages else {"role": "user", "content": [{"type": "text", "text": "Hello"}]}
+            try:
+                inputs = st.session_state.tokenizer.apply_chat_template(
+                    [last_message], 
+                    add_generation_prompt=True, 
+                    tokenize=True, 
+                    return_dict=True, 
+                    return_tensors="pt"
+                )
+                inputs = {k: v.to(model_device) for k, v in inputs.items()}
+                input_ids_length = inputs['input_ids'].shape[1]
+            except:
+                # Final fallback
+                inputs = st.session_state.tokenizer("Hello, how can I help?", return_tensors="pt")
+                inputs = {k: v.to(model_device) for k, v in inputs.items()}
+                input_ids_length = inputs['input_ids'].shape[1]
         
         # Optimized generation configuration for speed
         generation_config = {
-            "max_new_tokens": int(max_new_tokens),
-            "temperature": float(temperature),
+            "max_new_tokens": min(int(max_new_tokens), 512),  # Cap max tokens
+            "temperature": float(temperature) if temperature > 0.1 else 0.1,  # Minimum temperature
             "do_sample": True if temperature > 0.1 else False,
-            "pad_token_id": st.session_state.tokenizer.eos_token_id,
+            "pad_token_id": st.session_state.tokenizer.eos_token_id or st.session_state.tokenizer.pad_token_id,
             "eos_token_id": st.session_state.tokenizer.eos_token_id,
             "use_cache": True,  # Critical for speed - enables KV caching
             "num_beams": 1,  # Greedy decoding is fastest
@@ -346,13 +404,17 @@ def do_gemma_inference(messages, max_new_tokens, temperature):
         # Add sampling optimizations based on temperature
         if temperature > 0.1:
             generation_config.update({
-                "top_k": 50,  # Limit vocabulary for faster sampling
-                "top_p": 0.9,  # Nucleus sampling
+                "top_k": 40,  # Limit vocabulary for faster sampling
+                "top_p": 0.85,  # Nucleus sampling
             })
         
         # Perform inference with maximum speed optimizations
         with torch.inference_mode():  # Fastest inference mode
-            with torch.autocast(device_type="cuda", dtype=torch.float16):  # Mixed precision
+            # Use autocast only if model supports it (skip for quantized models)
+            if hasattr(st.session_state.model, 'config') and not getattr(st.session_state.model.config, 'quantization_config', None):
+                with torch.autocast(device_type="cuda", dtype=torch.float16):
+                    outputs = st.session_state.model.generate(**inputs, **generation_config)
+            else:
                 outputs = st.session_state.model.generate(**inputs, **generation_config)
         
         # Extract and decode new tokens
@@ -360,7 +422,7 @@ def do_gemma_inference(messages, max_new_tokens, temperature):
         response = st.session_state.tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
         
         if not response:
-            response = "I apologize, but I couldn't generate a response. Please try again."
+            response = "I apologize, but I couldn't generate a response. Please try again with a different prompt."
         
         # Performance logging
         end_time = time.time()
@@ -375,12 +437,12 @@ def do_gemma_inference(messages, max_new_tokens, temperature):
     except torch.cuda.OutOfMemoryError:
         logger.error("CUDA out of memory")
         torch.cuda.empty_cache()
-        return "I'm sorry, but I'm running low on memory. Please try a shorter message or restart the app."
+        return "I'm sorry, but I'm running low on GPU memory. Please try a shorter message or restart the app."
         
     except Exception as e:
         error_msg = str(e)
         logger.error(f"Inference failed: {error_msg}")
-        return f"An error occurred during inference: {error_msg}"
+        return f"An error occurred during inference. Please try again. Error: {error_msg[:100]}..."
 
 # --- MAIN HEADER ---
 st.markdown('<h1 class="main-header">🤖 Gemma 3N Conversational AI Assistant</h1>', unsafe_allow_html=True)
@@ -414,10 +476,10 @@ with st.sidebar:
 
     st.divider()
     
-    # Generation settings
+    # Generation settings with better defaults
     st.header("⚙️ Generation Settings")
-    max_tokens = st.slider("Max New Tokens", 50, 1024, 384, help="Maximum number of tokens to generate")
-    temperature = st.slider("Temperature", 0.1, 1.5, 0.9, 0.05, help="Controls randomness: lower = more focused, higher = more creative")
+    max_tokens = st.slider("Max New Tokens", 50, 512, 256, help="Maximum number of tokens to generate")
+    temperature = st.slider("Temperature", 0.1, 1.2, 0.7, 0.05, help="Controls randomness: lower = more focused, higher = more creative")
     
     st.divider()
     
@@ -449,9 +511,15 @@ with st.sidebar:
                 
                 # Performance tips
                 st.markdown("### ⚡ Speed Optimizations Active:")
-                st.markdown("✅ 4-bit Quantization\n✅ KV Caching\n✅ Half Precision\n✅ TF32 Enabled\n✅ Compiled Model")
+                st.markdown("✅ 4-bit Quantization\n✅ KV Caching\n✅ Optimized Generation\n✅ TF32 Enabled\n✅ Smart Truncation")
             else:
                 st.info(f"🖥️ Model Device: {model_device}")
+                
+            # Memory cleanup button
+            if st.button("🧹 Clear GPU Cache", help="Clear GPU memory cache"):
+                torch.cuda.empty_cache()
+                st.success("GPU cache cleared!")
+                
         except Exception as e:
             st.warning(f"⚠️ Device info unavailable: {e}")
     
@@ -459,7 +527,7 @@ with st.sidebar:
     with st.expander("🚀 Performance Tips"):
         st.markdown("""
         **For Maximum Speed:**
-        - Lower temperature (0.1-0.3) = faster generation
+        - Lower temperature (0.1-0.4) = faster generation
         - Shorter max tokens = quicker responses  
         - Clear chat history regularly
         - Use 'New Chat' for fresh conversations
@@ -468,22 +536,9 @@ with st.sidebar:
         - Unsloth 2x faster training/inference
         - 4-bit quantization (75% memory reduction)
         - KV caching for sequential generation
-        - Mixed precision (FP16) inference
-        - Torch compilation for speed
+        - Optimized token limits
+        - Smart conversation truncation
         """)
-    
-    st.divider()
-    if st.session_state.model_loaded:
-        try:
-            model_device = next(st.session_state.model.parameters()).device
-            if "cuda" in str(model_device):
-                gpu_info = torch.cuda.get_device_name(0)
-                gpu_memory = torch.cuda.get_device_properties(0).total_memory // (1024**3)
-                st.success(f"🖥️ GPU: {gpu_info}\n💾 Memory: {gpu_memory}GB")
-            else:
-                st.info(f"🖥️ Model Device: {model_device}")
-        except Exception as e:
-            st.warning(f"⚠️ Device info unavailable: {e}")
 
 # --- MAIN INTERFACE ---
 if not st.session_state.model_loaded:
@@ -499,7 +554,6 @@ else:
     for i, feature in enumerate(features):
         with cols[i % 3]:
             is_selected = st.session_state.current_feature == feature
-            card_class = "feature-card feature-selected" if is_selected else "feature-card"
             
             if st.button(
                 feature, 
@@ -529,7 +583,7 @@ else:
         # Show conversation length info
         msg_count = len(history)
         if msg_count > 0:
-            st.info(f"💬 {msg_count} messages | Conversation will auto-truncate if too long")
+            st.info(f"💬 {msg_count} messages | Auto-truncates for optimal performance")
     
     # Display chat history
     chat_container = st.container()
@@ -568,6 +622,10 @@ else:
             )
             if uploaded_image:
                 image = Image.open(uploaded_image)
+                # Resize image if too large
+                max_size = 512
+                if max(image.size) > max_size:
+                    image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
                 st.image(image, caption="Uploaded Image", width=300)
                 st.session_state.media_content = {"type": "image", "content": image}
                 media_uploaded = True
@@ -612,22 +670,18 @@ else:
                             st.session_state.media_content = {"type": "video", "content": frames}
                             media_uploaded = True
         
-        # Audio upload
+        # Audio upload (placeholder - would need actual audio processing)
         if "Audio" in current_feature and not history:
             st.subheader("🎵 Upload Audio")
+            st.warning("Audio processing is not fully implemented in this version. Text analysis is available.")
             uploaded_audio = st.file_uploader(
                 "Choose an audio file", 
                 type=['mp3', 'wav', 'ogg', 'm4a', 'flac'],
                 key="audio_upload"
             )
             if uploaded_audio:
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tfile:
-                    tfile.write(uploaded_audio.read())
-                    audio_path = tfile.name
-                temp_files.append(audio_path)
                 st.audio(uploaded_audio, format="audio/mp3")
-                st.session_state.media_content = {"type": "audio", "content": audio_path}
-                media_uploaded = True
+                st.info("Audio uploaded but processing is limited. You can still chat about it!")
     
     # Chat input
     if prompt := st.chat_input("💭 Type your message here..."):
@@ -645,8 +699,8 @@ else:
                 if media_type == "image":
                     user_content.insert(0, {"type": "image", "image": media_data})
                 elif media_type == "video":
-                    # Add fewer frames to prevent token limit issues
-                    frame_content = [{"type": "image", "image": frame} for frame in media_data[:4]]  # Reduced from 8 to 4
+                    # Add frames to content - limit to 3 for performance
+                    frame_content = [{"type": "image", "image": frame} for frame in media_data[:3]]
                     user_content = frame_content + user_content
                 elif media_type == "audio":
                     user_content.insert(0, {"type": "audio", "audio": media_data})
@@ -670,9 +724,9 @@ else:
                             cols = st.columns(min(4, len(media_data)))
                             for idx, frame in enumerate(media_data):
                                 with cols[idx % 4]:
-                                    st.image(frame, use_container_width=True, caption=f"Frame {idx+1}")
+                                    st.image(frame, use_column_width=True, caption=f"Frame {idx+1}")
                     elif media_type == "audio":
-                        st.audio(st.session_state.media_content["content"], format="audio/mp3")
+                        st.info("🎵 Audio file uploaded (processing limited)")
                 
                 st.markdown(prompt)
             
@@ -713,4 +767,4 @@ st.markdown("""
     🤖 Powered by Gemma 3N via Unsloth | Built with Streamlit<br>
     💡 Tip: Use the "New Chat" button to start fresh conversations with different media
 </div>
-""", unsafe_allow_html=True)
+""", unsafe_allow_html=True)"
