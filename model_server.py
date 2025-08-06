@@ -112,7 +112,7 @@ def initialize_session_state():
             "🎬 Video + Text → Text": [],
             "🎵 Audio + Text → Text": [],
         
-            "🧑‍💻 Video + Audio + Text → Text": [],
+
         },
         "media_content": None,
         "inference_count": 0
